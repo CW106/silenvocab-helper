@@ -23,6 +23,13 @@ import winocr
 import zhconv
 from PIL import Image
 
+ENGLISH_UI = "--english" in sys.argv
+
+
+def ui(chinese, english):
+    """Translate interface text only; OCR targets must stay in the game's language."""
+    return english if ENGLISH_UI else chinese
+
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
@@ -49,7 +56,6 @@ FALLBACK_SECONDS = 3.0
 ANSWERED_MARKERS = ("等對手", "等手作答", "已作答", "正在核對", "核對答案",
                     "你這題答", "兩邊都答", "你搶到出手權")
 STALE_SECONDS = 2.0  # a result this old (slow dictionary) is not clicked: the screen may have changed
-ACCURACY = 0.9
 QUIZ_WORD = re.compile(r"^[a-z][a-z\-']+( [a-z\-']+)?$")
 NOT_OPTION = ("對手", "作答", "處刑者", "進攻者", "防守者", "吸血者", "時間掠奪者", "蓄能者",
               "反擊者", "賭命者", "預言家", "免疫者", "收集者")
@@ -464,7 +470,7 @@ def decide_english(word, texts, layout_ok, deadline=None):
     Memory is only used on screens that look like a real quiz."""
     hit = known_pick(word, texts) if layout_ok else None
     if hit is not None:
-        return hit, [100.0 if i == hit else 0.0 for i in range(len(texts))], "（記住的答案）"
+        return hit, [100.0 if i == hit else 0.0 for i in range(len(texts))], ui("（記住的答案）", "(saved answer)")
     if deadline is None:
         deadline = time.monotonic() + LOOKUP_BUDGET
     f_explain = lookup_future(word)
@@ -492,7 +498,7 @@ def decide_english(word, texts, layout_ok, deadline=None):
     # the option that kept coming back in earlier quizzes of this word, when the dictionary has no strong match
     hh = history_pick(word, texts) if layout_ok else None
     if hh is not None:  # weak pick: show() waits for a second frame, so a late-read real answer can win
-        return hh, scores, "（之前出現過的答案）"
+        return hh, scores, ui("（之前出現過的答案）", "(previous answer)")
     if layout_ok and top >= WEAK_FLOOR and top - second >= WEAK_MARGIN:
         return order[0], scores, explain
     return None, scores, explain
@@ -618,7 +624,7 @@ def analyse(img):
                 save_unanswered(img, word)
         flag = "wait" if waiting else "quiz" if layout_ok else ""
         if not explain and idx is None:
-            return word, opts, None, "(查不到這個字)", scores, flag
+            return word, opts, None, ui("(查不到這個字)", "(word not found)"), scores, flag
         return word, opts, idx, explain, scores, flag
 
     if chinese and len(latin) >= 2:
@@ -630,7 +636,7 @@ def analyse(img):
         owners = _owner.get(clean_zh(q["text"]), ()) if layout_ok else ()
         hits = [i for i, o in enumerate(opts) if o["text"].strip().lower() in owners]
         if len(hits) == 1:
-            return (q["text"], opts, hits[0], "（記住的答案）",
+            return (q["text"], opts, hits[0], ui("（記住的答案）", "(saved answer)"),
                     [100.0 if i == hits[0] else 0.0 for i in range(len(opts))], flag)
         f_rev = lookup_future(q["text"], reverse=True)
         f_fwd = [lookup_future(o["text"]) for o in opts]
@@ -659,6 +665,21 @@ RANK_CARD = "本賽季"
 RANK_CARD_EXTRA_CHARS = 20
 RANK_CARD_COOLDOWN = 10
 BTN_RANKED = "開始排位"
+
+GAME_ACTION_EN = {
+    BTN_REPLAY: "Play again", BTN_CHAR: "Character", BTN_LOCK: "Lock",
+    BTN_SHIELD: "Shield", BTN_TANK: "Tank", BTN_ATTACK: "Attack",
+    BTN_CONTINUE: "Continue", BTN_SUBMIT: "Submit", BTN_CLOSE: "Close",
+    BTN_BATTLE: "Battle", RANK_CARD: "Season card", BTN_RANKED: "Start ranked",
+}
+
+
+def game_action_label(keyword):
+    if not ENGLISH_UI:
+        return keyword
+    if keyword.startswith(BTN_REPLAY):
+        return GAME_ACTION_EN[BTN_REPLAY] + keyword[len(BTN_REPLAY):]
+    return GAME_ACTION_EN.get(keyword, keyword)
 IDLE_REFRESH_SECONDS = 60
 RECOVER_SECONDS = 30
 SUBMIT_EXTRA_CHARS = 12
@@ -854,7 +875,7 @@ def click_at(x, y, fast=False, guard=None):
             return False
         if fast:
             if not u.SetCursorPos(x, y):
-                raise OSError("無法移動滑鼠到答案位置")
+                raise OSError(ui("無法移動滑鼠到答案位置", "Could not move the mouse to the answer"))
             time.sleep(0.015)  # let the browser process pointer movement before button-down
         else:
             curve_move(x, y)
@@ -863,24 +884,26 @@ def click_at(x, y, fast=False, guard=None):
             return False
         p = _POINT()
         if not u.GetCursorPos(ctypes.byref(p)) or abs(p.x - x) > 3 or abs(p.y - y) > 3:
-            raise OSError("滑鼠位置被移動，取消這次點擊")
+            raise OSError(ui("滑鼠位置被移動，取消這次點擊", "Mouse moved; click cancelled"))
         hwnd = u.WindowFromPoint(_POINT(x, y))
         pid = ctypes.c_ulong()
         if hwnd:
             u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if pid.value == os.getpid():
-                raise OSError("小幫手視窗擋住答案，請將小幫手移開")
+                raise OSError(ui("小幫手視窗擋住答案，請將小幫手移開", "Helper window covers the answer; move it away"))
         down, up = _INPUT(), _INPUT()
         down.mi.dwFlags, up.mi.dwFlags = 0x0002, 0x0004
         ctypes.set_last_error(0)
         if u.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT)) != 1:
-            raise OSError(f"Windows 未接受滑鼠按下（錯誤 {ctypes.get_last_error()}）")
+            raise OSError(ui(f"Windows 未接受滑鼠按下（錯誤 {ctypes.get_last_error()}）",
+                             f"Windows rejected mouse down (error {ctypes.get_last_error()})"))
         try:
             time.sleep(0.025 if fast else 0.03)
         finally:
             if u.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT)) != 1:
                 u.mouse_event(0x0004, 0, 0, 0, 0)  # do not leave the button held after a failed release
-                raise OSError(f"Windows 未接受滑鼠放開（錯誤 {ctypes.get_last_error()}）")
+                raise OSError(ui(f"Windows 未接受滑鼠放開（錯誤 {ctypes.get_last_error()}）",
+                                 f"Windows rejected mouse up (error {ctypes.get_last_error()})"))
     return True
 
 
@@ -925,7 +948,7 @@ class RegionSelector:
         self.top.attributes("-topmost", True)
         self.c = tk.Canvas(self.top, bg="black", cursor="cross", highlightthickness=0)
         self.c.pack(fill="both", expand=True)
-        self.c.create_text(mon["width"] // 2, 60, text="拖曳框選題目區域 (Esc 取消)",
+        self.c.create_text(mon["width"] // 2, 60, text=ui("拖曳框選題目區域 (Esc 取消)", "Drag to select the question area (Esc to cancel)"),
                            fill="white", font=("Microsoft JhengHei", 24, "bold"))
         self.c.bind("<ButtonPress-1>", self.down)
         self.c.bind("<B1-Motion>", self.move)
@@ -952,21 +975,21 @@ class RegionSelector:
 class App:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("單字小幫手")
+        self.root.title(ui("單字小幫手", "SilenVocab Cheat Helper"))
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#1e1e1e")
         self.region = None
         self.running = False
         self.last_key = None
 
-        f = ("Microsoft JhengHei", 11)
+        f = ("Segoe UI" if ENGLISH_UI else "Microsoft JhengHei", 11)
         bar = tk.Frame(self.root, bg="#1e1e1e")
         bar.pack(fill="x", padx=8, pady=6)
-        tk.Button(bar, text="① 框選區域", font=f, command=self.pick).pack(side="left")
-        self.btn = tk.Button(bar, text="② 開始", font=f, command=self.toggle, state="disabled")
+        tk.Button(bar, text=ui("① 框選區域", "① Select question area"), font=f, command=self.pick).pack(side="left")
+        self.btn = tk.Button(bar, text=ui("② 開始", "② Start"), font=f, command=self.toggle, state="disabled")
         self.btn.pack(side="left", padx=6)
         self.auto = tk.BooleanVar(value=False)
-        tk.Checkbutton(bar, text="自動點答案", variable=self.auto, font=f, fg="white",
+        tk.Checkbutton(bar, text=ui("自動點答案", "Auto-click answers"), variable=self.auto, font=f, fg="white",
                        bg="#1e1e1e", selectcolor="#333", activebackground="#1e1e1e",
                        activeforeground="white", command=self.set_auto).pack(side="left")
         self.pending_key = None
@@ -980,9 +1003,9 @@ class App:
 
         bar2 = tk.Frame(self.root, bg="#1e1e1e")
         bar2.pack(fill="x", padx=8, pady=(0, 6))
-        tk.Button(bar2, text="框選遊戲畫面", font=f, command=self.pick_game).pack(side="left")
+        tk.Button(bar2, text=ui("框選遊戲畫面", "Select game screen"), font=f, command=self.pick_game).pack(side="left")
         self.game_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(bar2, text="自動打遊戲", variable=self.game_var, font=f, fg="white",
+        tk.Checkbutton(bar2, text=ui("自動打遊戲", "Auto-play game"), variable=self.game_var, font=f, fg="white",
                        bg="#1e1e1e", selectcolor="#333", activebackground="#1e1e1e",
                        activeforeground="white",
                        command=self.set_game_on).pack(side="left", padx=6)
@@ -1001,30 +1024,30 @@ class App:
         self.stuck_saved = False
         self.stuck_count = 0
 
-        self.word = tk.Label(self.root, text="先框選題目區域", font=("Segoe UI", 20, "bold"),
+        self.word = tk.Label(self.root, text=ui("先框選題目區域", "Select a question area first"), font=("Segoe UI", 20, "bold"),
                              fg="white", bg="#1e1e1e")
         self.word.pack(anchor="w", padx=10)
         self.ans = tk.Label(self.root, text="", font=("Microsoft JhengHei", 22, "bold"),
                             fg="#4cff6a", bg="#1e1e1e")
         self.ans.pack(anchor="w", padx=10)
         self.expl = tk.Label(self.root, text="", font=("Microsoft JhengHei", 10), fg="#aaa",
-                             bg="#1e1e1e", wraplength=340, justify="left")
+                             bg="#1e1e1e", wraplength=540 if ENGLISH_UI else 340, justify="left")
         self.expl.pack(anchor="w", padx=10, pady=(0, 8))
         self.game_lbl = tk.Label(self.root, text="", font=("Microsoft JhengHei", 10), fg="#7cc4ff",
                                  bg="#1e1e1e")
         self.game_lbl.pack(anchor="w", padx=10)
-        self.click_lbl = tk.Label(self.root, text="自動點答案：未勾選", font=("Microsoft JhengHei", 10),
-                                  fg="#ffc66d", bg="#1e1e1e", wraplength=395, justify="left")
+        self.click_lbl = tk.Label(self.root, text=ui("自動點答案：未勾選", "Auto-click: off"), font=("Microsoft JhengHei", 10),
+                                  fg="#ffc66d", bg="#1e1e1e", wraplength=550 if ENGLISH_UI else 395, justify="left")
         self.click_lbl.pack(anchor="w", padx=10, pady=(2, 0))
-        tk.Label(self.root, text="F8 = 緊急停止", font=("Microsoft JhengHei", 9), fg="#777",
+        tk.Label(self.root, text=ui("F8 = 緊急停止", "F8 = emergency stop"), font=("Microsoft JhengHei", 9), fg="#777",
                  bg="#1e1e1e").pack(anchor="w", padx=10)
-        self.root.geometry("420x335+30+30")
+        self.root.geometry("580x335+30+30" if ENGLISH_UI else "420x335+30+30")
         exclude_from_capture(self.root)
 
         self.marker = tk.Toplevel(self.root)
         self.marker.overrideredirect(True)
         self.marker.attributes("-topmost", True)
-        tk.Label(self.marker, text="✔ 答案", font=("Microsoft JhengHei", 16, "bold"),
+        tk.Label(self.marker, text=ui("✔ 答案", "✔ Answer"), font=("Microsoft JhengHei", 16, "bold"),
                  fg="white", bg="#16a34a", padx=10, pady=2).pack()
         self.marker.withdraw()
         exclude_from_capture(self.marker)
@@ -1037,7 +1060,7 @@ class App:
     def set_region(self, r):
         self.region = r
         self.btn.config(state="normal")
-        self.word.config(text="區域已設定，按「開始」")
+        self.word.config(text=ui("區域已設定，按「開始」", "Area selected. Press Start."))
         if not self.running:
             self.toggle()
 
@@ -1048,7 +1071,7 @@ class App:
 
     def set_game_region(self, r):
         self.game_region = r
-        self.game_lbl.config(text="遊戲畫面已設定")
+        self.game_lbl.config(text=ui("遊戲畫面已設定", "Game screen selected"))
 
     def set_game_on(self):
         self.game_on = self.game_var.get()
@@ -1067,7 +1090,8 @@ class App:
         self.answer_attempts = 0
         self.answer_last_attempt = 0.0
         self.answer_choice = None
-        self.click_lbl.config(text="自動點答案：已開啟" if self.auto.get() else "自動點答案：未勾選")
+        self.click_lbl.config(text=ui("自動點答案：已開啟", "Auto-click: on") if self.auto.get()
+                              else ui("自動點答案：未勾選", "Auto-click: off"))
 
     def game_step(self, sct, quiz_active):
         now = time.time()
@@ -1085,7 +1109,9 @@ class App:
                 os.makedirs(STUCK_DIR, exist_ok=True)
                 fn = os.path.join(STUCK_DIR, time.strftime("%m%d_%H%M%S") + ".png")
                 img.convert("RGB").save(fn)
-                self.root.after(0, lambda: self.game_lbl.config(text=f"⚠ 卡住 {STUCK_SECONDS} 秒，截圖存到 stuck/{os.path.basename(fn)}"))
+                self.root.after(0, lambda: self.game_lbl.config(text=ui(
+                    f"⚠ 卡住 {STUCK_SECONDS} 秒，截圖存到 stuck/{os.path.basename(fn)}",
+                    f"⚠ No action for {STUCK_SECONDS} seconds; saved stuck/{os.path.basename(fn)}")))
             except Exception:
                 pass
         if now - self.last_action > IDLE_REFRESH_SECONDS:
@@ -1096,7 +1122,9 @@ class App:
             self.rank_card_clicked = False
             self.last_click["recover_scroll"] = time.time() + 2
             self.char_picked = False
-            self.root.after(0, lambda: self.game_lbl.config(text=f"🔄 {IDLE_REFRESH_SECONDS} 秒沒動作，重新整理網頁"))
+            self.root.after(0, lambda: self.game_lbl.config(text=ui(
+                f"🔄 {IDLE_REFRESH_SECONDS} 秒沒動作，重新整理網頁",
+                f"🔄 No action for {IDLE_REFRESH_SECONDS} seconds; refreshing page")))
             return
         if now < self.recovering_until:
             cx, cy = region["left"] + region["width"] // 2, region["top"] + region["height"] // 2
@@ -1121,7 +1149,9 @@ class App:
                     glog(f"恢復中：點了 {kw} @ {mon['left'] + pos[0]},{mon['top'] + pos[1]}")
                     if kw == BTN_RANKED:
                         self.recovering_until = 0.0
-                    self.root.after(0, lambda kw=kw: self.game_lbl.config(text=f"🎮 點了：{kw}  ({time.strftime('%H:%M:%S')})"))
+                    self.root.after(0, lambda kw=kw: self.game_lbl.config(text=ui(
+                        f"🎮 點了：{kw}  ({time.strftime('%H:%M:%S')})",
+                        f"🎮 Clicked: {game_action_label(kw)}  ({time.strftime('%H:%M:%S')})")))
                     return
             if now - self.last_click.get("recover_scroll", 0) >= 1.0:
                 self.last_click["recover_scroll"] = now
@@ -1144,7 +1174,9 @@ class App:
             self.last_click[kw] = self.last_action = time.time()
             self.stuck_saved = False
             glog(f"點了 {kw}")
-            self.root.after(0, lambda: self.game_lbl.config(text=f"🎮 點了：{kw}  ({time.strftime('%H:%M:%S')})"))
+            self.root.after(0, lambda: self.game_lbl.config(text=ui(
+                f"🎮 點了：{kw}  ({time.strftime('%H:%M:%S')})",
+                f"🎮 Clicked: {game_action_label(kw)}  ({time.strftime('%H:%M:%S')})")))
             return True
 
         if any(DAILY_MARKER in _norm(l["text"]) for l in lines):
@@ -1165,7 +1197,7 @@ class App:
             gray = find_gray_button(img)
             if gray and not gray[2]:
                 self.char_picked = False
-                return press(BTN_REPLAY + " (灰色按鈕)", gray[:2])
+                return press(BTN_REPLAY + ui(" (灰色按鈕)", " (gray button)"), gray[:2])
             if now - self.last_click.get("scroll", 0) >= 0.6:
                 self.last_click["scroll"] = now
                 scroll_at(region["left"] + region["width"] // 2, region["top"] + region["height"] // 2)
@@ -1199,7 +1231,7 @@ class App:
     def toggle(self):
         self.running = not self.running
         self.gen += 1  # threads from an earlier start see a new generation and stop
-        self.btn.config(text="暫停" if self.running else "② 開始")
+        self.btn.config(text=ui("暫停", "Pause") if self.running else ui("② 開始", "② Start"))
         if self.running:
             threading.Thread(target=self.loop, args=(self.gen,), daemon=True).start()
             threading.Thread(target=self.game_loop, args=(self.gen,), daemon=True).start()
@@ -1213,7 +1245,7 @@ class App:
                     try:
                         self.game_step(sct, self.quiz_active)
                     except Exception as e:
-                        self.root.after(0, lambda e=e: self.game_lbl.config(text=f"錯誤: {e}"))
+                        self.root.after(0, lambda e=e: self.game_lbl.config(text=ui(f"錯誤: {e}", f"Error: {e}")))
                 time.sleep(0.03)
 
     def loop(self, gen):
@@ -1231,7 +1263,7 @@ class App:
                     self.quiz_active = bool(result and result[5] == "quiz")
                     self.root.after(0, self.show, region, result, 0.0, t_shot, gen)
                 except Exception as e:
-                    self.root.after(0, lambda e=e: self.expl.config(text=f"錯誤: {e}"))
+                    self.root.after(0, lambda e=e: self.expl.config(text=ui(f"錯誤: {e}", f"Error: {e}")))
                 scan_until = time.monotonic() + SCAN_INTERVAL
                 while time.monotonic() < scan_until:
                     if ctypes.windll.user32.GetAsyncKeyState(0x77) & 0x8000:
@@ -1242,7 +1274,7 @@ class App:
     def stop_by_hotkey(self):
         if self.running:
             self.toggle()
-        self.word.config(text="已按 F8 停止")
+        self.word.config(text=ui("已按 F8 停止", "Stopped with F8"))
 
     def show(self, region, result, age=0.0, shot_at=None, gen=None):
         if not self.running or (gen is not None and gen != self.gen):
@@ -1257,10 +1289,11 @@ class App:
             elif now - self.none_since > 1.5:
                 self.reset_answer()
                 self.cur_q = None
-            self.word.config(text="(沒偵測到題目)")
+            self.word.config(text=ui("(沒偵測到題目)", "(No question detected)"))
             self.ans.config(text="")
             self.marker.withdraw()
-            self.click_lbl.config(text="等待題目" if self.auto.get() else "自動點答案：未勾選")
+            self.click_lbl.config(text=ui("等待題目", "Waiting for question") if self.auto.get()
+                                  else ui("自動點答案：未勾選", "Auto-click: off"))
             return
         self.none_since = None
         q, opts, idx, explain, scores, flag = result
@@ -1280,13 +1313,13 @@ class App:
         # click only on a screen laid out like a real quiz, with a fresh result
         can_click = flag == "quiz" and age <= STALE_SECONDS
         if not self.auto.get():
-            self.click_lbl.config(text="自動點答案：未勾選（目前只顯示答案）")
+            self.click_lbl.config(text=ui("自動點答案：未勾選（目前只顯示答案）", "Auto-click: off (showing answer only)"))
         elif flag == "wait":
-            self.click_lbl.config(text="已偵測到作答完成，不再點擊")
+            self.click_lbl.config(text=ui("已偵測到作答完成，不再點擊", "Answer already submitted; no click"))
         elif flag != "quiz":
-            self.click_lbl.config(text="選項位置尚未確認，重新辨識中")
+            self.click_lbl.config(text=ui("選項位置尚未確認，重新辨識中", "Answer positions unconfirmed; rescanning"))
         elif age > STALE_SECONDS:
-            self.click_lbl.config(text="畫面已過期，等待新的辨識結果")
+            self.click_lbl.config(text=ui("畫面已過期，等待新的辨識結果", "Screen result is stale; waiting for a fresh scan"))
         if can_click and idx is None and self.try_fallback(region, q, opts, scores, now, shot_at, gen):
             return
         if idx is None:
@@ -1296,7 +1329,7 @@ class App:
                 self.click_answer(region, q, opts, 0, now, shot_at, gen, guess=True)
             return
         o = opts[idx]
-        self.ans.config(text=f"答案：{o['text']}")
+        self.ans.config(text=ui(f"答案：{o['text']}", f"Answer: {o['text']}"))
         x0, y0, x1, y1 = o["box"]
         self.marker.update_idletasks()
         mh = self.marker.winfo_reqheight()
@@ -1314,7 +1347,7 @@ class App:
             if ans_key == self.pending_key or scores[idx] >= STRONG_SCORE or self.answer_attempts:
                 self.click_answer(region, q, opts, idx, now, shot_at, gen)
             else:
-                self.click_lbl.config(text="正在確認答案，下一次辨識後點擊")
+                self.click_lbl.config(text=ui("正在確認答案，下一次辨識後點擊", "Confirming answer; will click after the next scan"))
             self.pending_key = ans_key
 
     def click_answer(self, region, q, opts, idx, now, shot_at=None, gen=None, guess=False):
@@ -1322,26 +1355,23 @@ class App:
         if self.clicked_q == q:
             return False
         if self.answer_attempts >= ANSWER_MAX_ATTEMPTS:
-            self.click_lbl.config(text=f"已嘗試 {ANSWER_MAX_ATTEMPTS} 次，仍未確認；請檢查視窗遮擋或重新勾選自動點答案")
+            self.click_lbl.config(text=ui(
+                f"已嘗試 {ANSWER_MAX_ATTEMPTS} 次，仍未確認；請檢查視窗遮擋或重新勾選自動點答案",
+                f"Unconfirmed after {ANSWER_MAX_ATTEMPTS} attempts; check for a covering window or toggle Auto-click off and on"))
             return False
         if self.answer_attempts and now - self.answer_last_attempt < ANSWER_RETRY_SECONDS:
             return False
         if self.answer_choice is not None:
             hits = [i for i, o in enumerate(opts) if clean_zh(o["text"]) == self.answer_choice]
             if len(hits) != 1:
-                self.click_lbl.config(text="等待原選項重新辨識，暫不重試")
+                self.click_lbl.config(text=ui("等待原選項重新辨識，暫不重試", "Waiting to recognize the original choice again"))
                 return False
             idx = hits[0]
-        elif not guess:
-            wrong = [i for i, op in enumerate(opts)
-                     if i != idx and not any(w in _norm(op["text"]) for w in NOT_OPTION)]
-            if wrong and random.random() >= ACCURACY:
-                idx = random.choice(wrong)
         o = opts[idx]
         x0, y0, x1, y1 = o["box"]
         cx, cy = int((x0 + x1) / 2), int((y0 + y1) / 2)
         if not (0 <= cx < region["width"] and 0 <= cy < region["height"]):
-            self.click_lbl.config(text="答案位置超出框選區域，請重新框選")
+            self.click_lbl.config(text=ui("答案位置超出框選區域，請重新框選", "Answer is outside the selected area; select it again"))
             return False
         self.answer_choice = clean_zh(o["text"])
         self.answer_attempts += 1
@@ -1355,18 +1385,20 @@ class App:
         try:
             sent = click_at(region["left"] + cx, region["top"] + cy, fast=True, guard=fresh)
         except OSError as e:
-            self.click_lbl.config(text=f"點擊失敗：{e}")
+            self.click_lbl.config(text=ui(f"點擊失敗：{e}", f"Click failed: {e}"))
             glog(f"答案點擊失敗 {q} @ {region['left'] + cx},{region['top'] + cy}：{e}")
             return False
         if not sent:
             # Cancellation did not send an input event, so it does not use up a retry.
             self.answer_attempts -= 1
-            self.click_lbl.config(text="已取消過期或停止的點擊，等待新畫面")
+            self.click_lbl.config(text=ui("已取消過期或停止的點擊，等待新畫面", "Stale or stopped click cancelled; waiting for a new screen"))
             return False
         self.clicked_key = (q, self.answer_choice)
         self.answer_last_attempt = self.last_action = time.time()
         self.stuck_saved = False
-        self.click_lbl.config(text=f"已點「{o['text']}」（第 {self.answer_attempts} 次），等待作答確認")
+        self.click_lbl.config(text=ui(
+            f"已點「{o['text']}」（第 {self.answer_attempts} 次），等待作答確認",
+            f"Clicked '{o['text']}' (attempt {self.answer_attempts}); waiting for confirmation"))
         glog(f"答案點擊 {q} -> {o['text']} @ {region['left'] + cx},{region['top'] + cy} 第{self.answer_attempts}次")
         return True
 
@@ -1383,8 +1415,10 @@ class App:
         i = max(cand, key=scores.__getitem__)
         if not self.click_answer(region, q, opts, i, now, shot_at, gen, guess=True):
             return False
-        self.ans.config(text=f"猜：{opts[i]['text']}")
-        self.game_lbl.config(text=f"⏱ {FALLBACK_SECONDS:.0f} 秒沒把握，猜 {opts[i]['text']} ({scores[i]:.1f})")
+        self.ans.config(text=ui(f"猜：{opts[i]['text']}", f"Guess: {opts[i]['text']}"))
+        self.game_lbl.config(text=ui(
+            f"⏱ {FALLBACK_SECONDS:.0f} 秒沒把握，猜 {opts[i]['text']} ({scores[i]:.1f})",
+            f"⏱ Uncertain after {FALLBACK_SECONDS:.0f} seconds; guessed {opts[i]['text']} ({scores[i]:.1f})"))
         return True
 
     def run(self):
@@ -1406,6 +1440,9 @@ if __name__ == "__main__":
     _k32.CreateMutexW.restype = ctypes.c_void_p
     _single = _k32.CreateMutexW(None, False, "Local\\vocab_helper_single_instance")
     if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
-        ctypes.windll.user32.MessageBoxW(None, "單字小幫手已經在執行了，不用再開一個。", "單字小幫手", 0x40)
+        ctypes.windll.user32.MessageBoxW(None,
+            ui("單字小幫手已經在執行了，不用再開一個。", "SilenVocab Cheat Helper is already running."),
+            ui("單字小幫手", "SilenVocab Cheat Helper"), 0x40)
         sys.exit(0)
     App().run()
+
