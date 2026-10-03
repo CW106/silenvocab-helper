@@ -2,6 +2,8 @@
 
 [English README](README.en.md)
 
+英文介面：執行 `python vocab_helper.py --english`，或雙擊 `Launch SilenVocab Helper (English).bat`。中文與英文介面一次只能開一個。
+
 適用於 [SilenVocab](https://silenvocab.com/) 的非官方 Windows cheat／自動作答輔助工具。它讀取使用者框選的網站畫面，以 OCR 辨識題目與選項，顯示查到的答案；可自行勾選自動點答案。程式也提供對戰畫面框選與自動操作選項。辨識和字典比對可能出錯，請自行確認作答結果。
 
 ## 安裝
