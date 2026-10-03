@@ -1,6 +1,8 @@
-# SilenVocab 單字小幫手
+# SilenVocab Cheat 單字小幫手
 
-適用於 [SilenVocab](https://silenvocab.com/) 的 Windows 單字選擇題輔助工具。它讀取使用者框選的網站畫面，以 OCR 辨識題目與選項，顯示查到的答案；可自行勾選自動點答案。程式也提供對戰畫面框選與自動操作選項。辨識和字典比對可能出錯，請自行確認作答結果。
+[English README](README.en.md)
+
+適用於 [SilenVocab](https://silenvocab.com/) 的非官方 Windows cheat／自動作答輔助工具。它讀取使用者框選的網站畫面，以 OCR 辨識題目與選項，顯示查到的答案；可自行勾選自動點答案。程式也提供對戰畫面框選與自動操作選項。辨識和字典比對可能出錯，請自行確認作答結果。
 
 ## 安裝
 
@@ -23,3 +25,4 @@ python vocab_helper.py
 `dict_cache.json` 和 `known_answers.json` 是隨此版本附上的字典與答案快取。程式會在執行時更新它們。診斷紀錄、作答紀錄、截圖和備份不納入公開儲存庫。
 
 本工具是非官方輔助程式，與 SilenVocab 網站開發者無關。
+
