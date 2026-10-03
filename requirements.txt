@@ -1,0 +1,6 @@
+mss
+numpy
+Pillow
+winocr
+zhconv
+
